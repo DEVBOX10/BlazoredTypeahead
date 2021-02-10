@@ -50,6 +50,7 @@ namespace Blazored.Typeahead
         [Parameter] public bool Disabled { get; set; } = false;
         [Parameter] public bool EnableDropDown { get; set; } = false;
         [Parameter] public bool ShowDropDownOnFocus { get; set; } = false;
+        [Parameter] public bool DisableClear { get; set; } = false;
 
         [Parameter] public bool StopPropagation { get; set; } = false;
         [Parameter] public bool PreventDefault { get; set; } = false;
@@ -280,15 +281,21 @@ namespace Blazored.Typeahead
         }
 
         private bool _resettingControl = false;
-        private async Task ResetControl()
+        private void ResetControl()
         {
             if (!_resettingControl)
             {
                 _resettingControl = true;
-                await Task.Delay(200);
                 Initialize();
                 _resettingControl = false;
             }
+        }
+
+        [JSInvokable("ResetControlBlur")]
+        public void ResetControlBlur()
+        {
+            ResetControl();
+            StateHasChanged();
         }
 
         private async Task ShowMaximumSuggestions()
@@ -314,6 +321,7 @@ namespace Blazored.Typeahead
                 IsSearching = false;
                 await InvokeAsync(StateHasChanged);
             }
+            await HookOutsideClick();
         }
 
         private string GetSelectedSuggestionClass(TItem item, int index)
@@ -355,8 +363,14 @@ namespace Blazored.Typeahead
 
             IsSearching = false;
             IsShowingSuggestions = true;
+            await HookOutsideClick();
             SelectedIndex = 0;
             await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task HookOutsideClick()
+        {
+            await JSRuntime.OnOutsideClick(_searchInput, this, "ResetControlBlur", true);
         }
 
         private async Task SelectResult(TItem item)
@@ -376,6 +390,7 @@ namespace Blazored.Typeahead
             }
             else
             {
+                if (Value != null && Value.Equals(value)) return;
                 Value = value;
                 await ValueChanged.InvokeAsync(value);
             }
@@ -449,6 +464,11 @@ namespace Blazored.Typeahead
             {
                 _debounceTimer.Dispose();
             }
+        }
+
+        public async Task Focus()
+        {
+            await Interop.Focus(JSRuntime, _searchInput);
         }
     }
 }
