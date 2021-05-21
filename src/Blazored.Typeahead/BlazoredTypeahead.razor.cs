@@ -35,8 +35,9 @@ namespace Blazored.Typeahead
 
         [Parameter] public Func<string, Task<IEnumerable<TItem>>> SearchMethod { get; set; }
         [Parameter] public Func<TItem, TValue> ConvertMethod { get; set; }
+        [Parameter] public Func<string, Task<TItem>> AddItemOnEmptyResultMethod { get; set; }
 
-        [Parameter] public RenderFragment NotFoundTemplate { get; set; }
+        [Parameter] public RenderFragment<string> NotFoundTemplate { get; set; }
         [Parameter] public RenderFragment HelpTemplate { get; set; }
         [Parameter] public RenderFragment<TItem> ResultTemplate { get; set; }
         [Parameter] public RenderFragment<TValue> SelectedTemplate { get; set; }
@@ -131,11 +132,6 @@ namespace Blazored.Typeahead
             }
         }
 
-        protected override void OnParametersSet()
-        {
-            Initialize();
-        }
-
         private void Initialize()
         {
             SearchText = "";
@@ -182,6 +178,7 @@ namespace Blazored.Typeahead
 
             await Task.Delay(250); // Possible race condition here.
             await Interop.Focus(JSRuntime, _searchInput);
+            await HookOutsideClick();
         }
 
         private async Task HandleKeyUpOnShowDropDown(KeyboardEventArgs args)
@@ -237,6 +234,14 @@ namespace Blazored.Typeahead
                 SearchText = args.Key;
             }
         }
+        private async Task HandleKeydown(KeyboardEventArgs args)
+        {
+            if (args.Key == "Tab")
+            {
+                await ResetControl();
+            }
+            
+        }
 
         private async Task HandleKeyup(KeyboardEventArgs args)
         {
@@ -261,6 +266,10 @@ namespace Blazored.Typeahead
             {
                 await SelectTheFirstAndOnlySuggestion();
             }
+            else if (args.Key == "Enter" && ShowNotFound() && AddItemOnEmptyResultMethod != null)
+            {
+                await SelectNotFoundPlaceholder();
+            }
             else if (args.Key == "Enter" && SelectedIndex >= 0 && SelectedIndex < Suggestions.Count())
             {
                 await SelectResult(Suggestions[SelectedIndex]);
@@ -281,7 +290,7 @@ namespace Blazored.Typeahead
         }
 
         private bool _resettingControl = false;
-        private void ResetControl()
+        private async Task ResetControl()
         {
             if (!_resettingControl)
             {
@@ -289,12 +298,19 @@ namespace Blazored.Typeahead
                 Initialize();
                 _resettingControl = false;
             }
+
+            if (IsMultiselect)
+            {
+                await ValuesChanged.InvokeAsync(Values);
+                _editContext?.NotifyFieldChanged(_fieldIdentifier);
+            }
+
         }
 
         [JSInvokable("ResetControlBlur")]
-        public void ResetControlBlur()
+        public async Task ResetControlBlur()
         {
-            ResetControl();
+            await ResetControl();
             StateHasChanged();
         }
 
@@ -321,6 +337,10 @@ namespace Blazored.Typeahead
                 IsSearching = false;
                 await InvokeAsync(StateHasChanged);
             }
+            else
+            {
+                await ResetControlBlur();
+            }
             await HookOutsideClick();
         }
 
@@ -345,6 +365,13 @@ namespace Blazored.Typeahead
             }
 
             return Equals(value, Value) ? resultClass : string.Empty;
+        }
+
+        private string GetSelectedSuggestionClass(int index)
+        {
+            const string resultClass = "blazored-typeahead__active-item";
+
+            return index == SelectedIndex ? resultClass : string.Empty;
         }
 
         private async void Search(Object source, ElapsedEventArgs e)
@@ -376,7 +403,7 @@ namespace Blazored.Typeahead
         private async Task SelectResult(TItem item)
         {
             var value = ConvertMethod(item);
-
+       
             if (IsMultiselect)
             {
                 var valueList = Values ?? new List<TValue>();
@@ -397,14 +424,20 @@ namespace Blazored.Typeahead
 
             _editContext?.NotifyFieldChanged(_fieldIdentifier);
 
-            if (IsMultiselect)
+            Initialize();
+        }
+
+        private async Task SelectNotFoundPlaceholder()
+        {
+            try
             {
-                await Interop.Focus(JSRuntime, _searchInput);
+                // Potentially dangerous code
+                var item = await AddItemOnEmptyResultMethod(SearchText);
+                await SelectResult(item);
             }
-            else
+            catch (Exception e)
             {
-                await Task.Delay(250);
-                await Interop.Focus(JSRuntime, _mask);
+                Console.WriteLine(e.Message);
             }
         }
 
@@ -468,7 +501,7 @@ namespace Blazored.Typeahead
 
         public async Task Focus()
         {
-            await Interop.Focus(JSRuntime, _searchInput);
+            await HandleClickOnMask();
         }
     }
 }
